@@ -148,6 +148,13 @@ class vsUpload {
             }
         }, false);
 
+	// Error event listener
+	xhr.onerror = () => {
+		if (typeof this.onError === 'function') {
+			this.onError(ranID, file, `Network error occurred during the upload of ${file.name}.`);
+		}
+	};
+
         xhr.onreadystatechange = () => {
             if (xhr.readyState === XMLHttpRequest.DONE) {
 				if(typeof this.onComplete === 'function'){
