@@ -181,7 +181,7 @@ class vsUpload {
         xhr.onreadystatechange = () => {
             if (xhr.readyState === XMLHttpRequest.DONE) {
 				if(typeof this.onComplete === 'function'){
-					this.onComplete(ranID, file);
+					this.onComplete(ranID, file, xhr.responseText);
 				}
             }
         };
