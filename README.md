@@ -24,6 +24,17 @@ Only accept certain file types
 upload.setAllowedFileTypes(['jpg','obj']);
 ```
 
+Screen Capture
+```
+upload.captureScreen();
+
+or
+
+if(upload.isScreenCaptureSupported()){
+  upload.captureScreen();
+}
+```
+
 
 
 Handles
