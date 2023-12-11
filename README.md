@@ -24,6 +24,11 @@ Only accept certain file types
 upload.setAllowedFileTypes(['jpg','obj']);
 ```
 
+Supports pasting images into text field
+```
+upload.setup_clipboard('textfield_id');
+````
+
 Screen Capture
 ```
 upload.captureScreen();
