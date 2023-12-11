@@ -45,7 +45,7 @@ if(upload.isScreenCaptureSupported()){
 Handles
 ```
 // File Upload Complete
-upload.onComplete = function(ranID, file){}
+upload.onComplete = function(ranID, file, response){}
 
 // File Upload Progress
 upload.onUpdate = function(ranID, file){}
