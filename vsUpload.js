@@ -52,6 +52,29 @@ class vsUpload {
 			});
         }
     }
+	setup_clipboard(divID){
+		document.getElementById(divID).addEventListener('paste', (event) => {
+			const items = (event.clipboardData || event.originalEvent.clipboardData).items;
+	
+			for (const item of items) {
+				if (item.type.indexOf('image') === 0) {
+					const blob = item.getAsFile();
+	
+					// Generate a filename based on MIME type
+					let filename = "pasted-image";
+					let extension = blob.type.match(/\/(.*?)$/);
+					if (extension) {
+						extension = extension[1];
+						if (extension === "jpeg") extension = "jpg"; // Common practice to use .jpg
+						filename += "." + extension;
+					}
+	
+					const file = new File([blob], filename, { type: blob.type });
+					this.uploadFile(file);
+				}
+			}
+		});
+	}
 
     /**
      * Sets additional parameters to be sent along with the file upload.
@@ -228,4 +251,57 @@ class vsUpload {
         };
         reader.readAsDataURL(file);
     }
+
+	
+	/**
+		Will trigger Share prompt to user.
+		Allowing the user to select what Screen or Window to capture
+	*/
+	isScreenCaptureSupported() {
+		return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+	}
+	async captureScreen(){
+		try {
+			// Request screen capture stream
+			const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+
+			// Create a video element to capture a frame
+			const video = document.createElement('video');
+			video.srcObject = stream;
+
+			// When the video is ready, capture a still frame
+			video.onloadedmetadata = async () => {
+				video.play();
+
+				// Create a canvas to draw the frame
+				const canvas = document.createElement('canvas');
+				canvas.width = video.videoWidth;
+				canvas.height = video.videoHeight;
+
+				// Draw the video frame to the canvas
+				const ctx = canvas.getContext('2d');
+				ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+				// Stop the video stream
+				stream.getTracks().forEach(track => track.stop());
+				video.srcObject = null;
+				// Remove the video element
+				if (video.parentNode) {
+					video.parentNode.removeChild(video);
+				}
+
+				canvas.toBlob(async (blob) => {
+					const file = new File([blob], "screenshot.jpg", { type: "image/jpeg" });
+					_upload.uploadFile(file);
+				}, 'image/jpeg');
+				
+
+				// You can now use the image for your purposes, e.g., display or download
+				//console.log(image); // For example, log the image URL
+			};
+		}
+		catch (err) {
+			console.error('Error: ' + err);
+		}
+	}
 }
