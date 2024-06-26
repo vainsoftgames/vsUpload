@@ -2,6 +2,11 @@ class vsUpload {
 	onComplete; // Callback when upload is complete
 	onUpdate; // Callback for upload progress updates
 	onError; // Callback for handling errors
+	onStart; // Callback when starting
+	onPreview; // If wanting to preview before uploading
+	fnc_stopCapture;
+	
+	asset_loc; // Location js is located, needed for vsWorker_upload.js
 
     /**
      * Creates an instance of vsUpload.
@@ -31,27 +36,29 @@ class vsUpload {
         }
 
         // Drag and Drop Events
-        if(this.dropZone){
-			this.dropZone.addEventListener('dragover', (event) => {
-				event.preventDefault();
-				this.dropZone.classList.add('drag-over');
-			});
-
-			this.dropZone.addEventListener('dragenter', (event) => {
-				event.preventDefault();
-			});
-
-			this.dropZone.addEventListener('dragleave', () => {
-				this.dropZone.classList.remove('drag-over');
-			});
-
-			this.dropZone.addEventListener('drop', (event) => {
-				event.preventDefault();
-				this.dropZone.classList.remove('drag-over');
-				this.handleFiles(event.dataTransfer.files);
-			});
-        }
+         if(this.dropZone) this.setup_drop(this.dropZone);
     }
+	setup_drop(divID){
+		let dropzone = document.getElementById(divID);
+		dropzone.addEventListener('dragover', (event) => {
+			event.preventDefault();
+			dropzone.classList.add('drag-over');
+		});
+
+		dropzone.addEventListener('dragenter', (event) => {
+			event.preventDefault();
+		});
+
+		dropzone.addEventListener('dragleave', () => {
+			dropzone.classList.remove('drag-over');
+		});
+
+		dropzone.addEventListener('drop', (event) => {
+			event.preventDefault();
+			dropzone.classList.remove('drag-over');
+			this.handleFiles(event.dataTransfer.files);
+		});
+	}
 	setup_clipboard(divID){
 		document.getElementById(divID).addEventListener('paste', (event) => {
 			const items = (event.clipboardData || event.originalEvent.clipboardData).items;
@@ -146,48 +153,43 @@ class vsUpload {
      * @param {File} file - The file to be uploaded.
      */
     uploadFile(file) {
-        const formData = new FormData();
-        formData.append('file', file);
-
-        // Add additional data to FormData
-        for (const key in this.para) {
-            formData.append(key, this.para[key]);
-        }
-
-        const xhr = new XMLHttpRequest();
         const ranID = this.createProgressBar(file);
 
-        this.xhrRefs[ranID] = xhr; // Store the XHR reference
-        formData.append('ranID', ranID);
+        const worker = new Worker(this.asset_loc +'vainsoft/vsWorker_upload.js?_cache='+ (Date.now()));
+        this.xhrRefs[ranID] = worker;
 
-        xhr.upload.addEventListener('progress', (event) => {
-            if (event.lengthComputable) {
-                const percentComplete = event.loaded / event.total * 100;
-				
-				if(typeof this.onUpdate === 'function') this.onUpdate(ranID, file);
+        worker.postMessage({
+            action: 'upload',
+            file: file,
+            url: this.uploadURL,
+            additionalData: this.para,
+            ranID: ranID
+        });
 
-                document.getElementById(ranID +'_progBar').value = percentComplete;
-                document.getElementById(ranID +'_progTXT').innerHTML = (percentComplete +'%');
+        worker.onmessage = (event) => {
+            const { ranID, progress, complete, response, error, aborted } = event.data;
+			console.log('local on message', event.data);
+            if (progress !== undefined) {
+                document.getElementById(ranID + '_progBar').value = progress;
+                document.getElementById(ranID + '_progTXT').innerHTML = progress + '%';
+                if (typeof this.onUpdate === 'function') this.onUpdate(ranID, file);
             }
-        }, false);
-
-	// Error event listener
-	xhr.onerror = () => {
-		if (typeof this.onError === 'function') {
-			this.onError(ranID, file, `Network error occurred during the upload of ${file.name}.`);
-		}
-	};
-
-        xhr.onreadystatechange = () => {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-				if(typeof this.onComplete === 'function'){
-					this.onComplete(ranID, file, xhr.responseText);
-				}
+            if (complete) {
+                if (typeof this.onComplete === 'function') this.onComplete(ranID, file, response);
+                worker.terminate();
+                delete this.xhrRefs[ranID];
+            }
+            if (error) {
+                if (typeof this.onError === 'function') this.onError(ranID, file, error);
+                worker.terminate();
+                delete this.xhrRefs[ranID];
+            }
+            if (aborted) {
+                worker.terminate();
+                delete this.xhrRefs[ranID];
+                document.getElementById(ranID).remove();
             }
         };
-
-        xhr.open('POST', this.uploadURL, true);
-        xhr.send(formData);
     }
 
     /**
@@ -195,13 +197,8 @@ class vsUpload {
      * @param {string} ranID - The unique ID of the upload to cancel.
      */
     cancelUpload(ranID) {
-		if (this.xhrRefs[ranID]) {
-			this.xhrRefs[ranID].abort(); // Abort the XHR request
-			delete this.xhrRefs[ranID]; // Remove the reference
-
-			// Update the UI accordingly
-			document.getElementById(ranID).remove()
-		}
+		const worker = this.xhrRefs[ranID];
+		if(work) worker.postMessage({ action: 'abort', ranID: ranID });
 	}
 
     createProgressBar(file) {
@@ -260,48 +257,90 @@ class vsUpload {
 	isScreenCaptureSupported() {
 		return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
 	}
-	async captureScreen(){
+	
+	/**
+		Captures the screen based on the singleFrame parameter.
+		@param {boolean} singleFrame - Determines whether to capture a single frame or record a video.
+	*/
+	async captureScreen(singleFrame = true, preview = false){
 		try {
-			// Request screen capture stream
-			const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+            const screenStream  = await navigator.mediaDevices.getDisplayMedia({ video: true });
 
-			// Create a video element to capture a frame
-			const video = document.createElement('video');
-			video.srcObject = stream;
-
-			// When the video is ready, capture a still frame
-			video.onloadedmetadata = async () => {
-				video.play();
-
-				// Create a canvas to draw the frame
-				const canvas = document.createElement('canvas');
-				canvas.width = video.videoWidth;
-				canvas.height = video.videoHeight;
-
-				// Draw the video frame to the canvas
-				const ctx = canvas.getContext('2d');
-				ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-				// Stop the video stream
-				stream.getTracks().forEach(track => track.stop());
-				video.srcObject = null;
-				// Remove the video element
-				if (video.parentNode) {
-					video.parentNode.removeChild(video);
-				}
-
-				canvas.toBlob(async (blob) => {
-					const file = new File([blob], "screenshot.jpg", { type: "image/jpeg" });
-					_upload.uploadFile(file);
-				}, 'image/jpeg');
-				
-
-				// You can now use the image for your purposes, e.g., display or download
-				//console.log(image); // For example, log the image URL
-			};
-		}
+            if (singleFrame) this.captureSingleFrame(screenStream, preview);
+            else {
+				const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+				const combinedStream = new MediaStream([...screenStream.getTracks(), ...audioStream.getTracks()]);
+				this.recordVideo(combinedStream, preview);
+			}
+        }
 		catch (err) {
-			console.error('Error: ' + err);
-		}
+            console.error('Error: ' + err);
+        }
 	}
+	/**
+		Captures a single frame from the screen and uploads it.
+		@param {MediaStream} stream - The media stream to capture the frame from.
+	*/
+    captureSingleFrame(stream = MediaStream, preview = false) {
+        const video = document.createElement('video');
+        video.srcObject = stream;
+
+        video.onloadedmetadata = async () => {
+            video.play();
+
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            stream.getTracks().forEach(track => track.stop());
+            video.srcObject = null;
+
+            if (video.parentNode) {
+                video.parentNode.removeChild(video);
+            }
+
+            canvas.toBlob(async (blob) => {
+                const file = new File([blob], "screenshot.jpg", { type: "image/jpeg" });
+				
+				if(preview && typeof this.onPreview === 'function') this.onPreview(file);
+				else this.uploadFile(file);
+            }, 'image/jpeg');
+        };
+    }
+
+	/**
+		Records a video from the screen and uploads it.
+		@param {MediaStream} stream - The media stream to record the video from.
+	*/
+    recordVideo(stream = MediaStream, preview = false) {
+        const mediaRecorder = new MediaRecorder(stream);
+        let recordedChunks = [];
+
+        mediaRecorder.ondataavailable = function(event) {
+            if (event.data.size > 0) {
+                recordedChunks.push(event.data);
+            }
+        };
+
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunks, {
+                type: 'video/webm'
+            });
+            const file = new File([blob], 'screen_recording.webm', { type: 'video/webm' });
+
+            if(preview && typeof this.onPreview === 'function') this.onPreview(file);
+			else this.uploadFile(file);
+            recordedChunks = [];
+        };
+
+        mediaRecorder.start();
+		
+		this.fnc_stopCapture = () => {
+            mediaRecorder.stop();
+            stream.getTracks().forEach(track => track.stop());
+        };
+    }
 }
