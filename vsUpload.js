@@ -6,7 +6,12 @@ class vsUpload {
 	onPreview; // If wanting to preview before uploading
 	fnc_stopCapture;
 	
-	asset_loc; // Location js is located, needed for vsWorker_upload.js
+	// Video Screen Recording Callbacks
+	onStartRecording; 
+	onStopRecording;
+	onErrorRecording;
+	
+	asset_loc;
 
     /**
      * Creates an instance of vsUpload.
@@ -16,10 +21,10 @@ class vsUpload {
      * @param {string} uploadURL - The URL where files will be uploaded.
      */
     constructor(inputID, progressContainerID, dropZoneID, uploadURL) {
-        if(inputID) this.inputElement = document.getElementById(inputID);
-        if(progressContainerID) this.progressContainer = document.getElementById(progressContainerID);
-        if(dropZoneID) this.dropZone = document.getElementById(dropZoneID);
-        if(uploadURL) this.uploadURL = uploadURL;
+		this.inputElement = inputID ? document.getElementById(inputID) : null;
+        this.progressContainer = progressContainerID ? document.getElementById(progressContainerID) : null;
+        this.dropZone = dropZoneID ? document.getElementById(dropZoneID) : null;
+        this.uploadURL = uploadURL || '';
 
         this.para = {}; // Dictionary to hold additional data
         this.allowedFileTypes = []; // Array to hold allowed file types
@@ -36,37 +41,38 @@ class vsUpload {
         }
 
         // Drag and Drop Events
-         if(this.dropZone) this.setup_drop(this.dropZone);
+        if(typeof this.dropZone != 'undefined') this.setup_drop();
     }
-	setup_drop(divID){
-		let dropzone = document.getElementById(divID);
-		dropzone.addEventListener('dragover', (event) => {
+
+	setup_drop(){
+		this.dropZone.addEventListener('dragover', (event) => {
 			event.preventDefault();
-			dropzone.classList.add('drag-over');
+			this.dropZone.classList.add('drag-over');
 		});
 
-		dropzone.addEventListener('dragenter', (event) => {
+		this.dropZone.addEventListener('dragenter', (event) => {
 			event.preventDefault();
 		});
 
-		dropzone.addEventListener('dragleave', () => {
-			dropzone.classList.remove('drag-over');
+		this.dropZone.addEventListener('dragleave', () => {
+			this.dropZone.classList.remove('drag-over');
 		});
 
-		dropzone.addEventListener('drop', (event) => {
+		this.dropZone.addEventListener('drop', (event) => {
 			event.preventDefault();
-			dropzone.classList.remove('drag-over');
+			this.dropZone.classList.remove('drag-over');
 			this.handleFiles(event.dataTransfer.files);
 		});
 	}
+
 	setup_clipboard(divID){
 		document.getElementById(divID).addEventListener('paste', (event) => {
 			const items = (event.clipboardData || event.originalEvent.clipboardData).items;
-	
+
 			for (const item of items) {
 				if (item.type.indexOf('image') === 0) {
 					const blob = item.getAsFile();
-	
+
 					// Generate a filename based on MIME type
 					let filename = "pasted-image";
 					let extension = blob.type.match(/\/(.*?)$/);
@@ -75,7 +81,7 @@ class vsUpload {
 						if (extension === "jpeg") extension = "jpg"; // Common practice to use .jpg
 						filename += "." + extension;
 					}
-	
+
 					const file = new File([blob], filename, { type: blob.type });
 					this.uploadFile(file);
 				}
@@ -98,6 +104,7 @@ class vsUpload {
     setAllowedFileTypes(types) {
         this.allowedFileTypes = types;
     }
+	
 
     /**
      * Handles the file upload process for selected files.
@@ -144,7 +151,7 @@ class vsUpload {
         if (this.allowedFileTypes.length === 0) {
             return true; // If no file type restriction is set, allow all files
         }
-        const fileType = file.name.split('.').pop().toLowerCase();
+        const fileType = this.getFileExt(file);
         return this.allowedFileTypes.includes(fileType);
     }
 
@@ -157,6 +164,9 @@ class vsUpload {
 
         const worker = new Worker(this.asset_loc +'vainsoft/vsWorker_upload.js?_cache='+ (Date.now()));
         this.xhrRefs[ranID] = worker;
+
+		// Trigger on Start of file upload
+		if (typeof this.onStart === 'function') this.onStart(ranID, file);
 
         worker.postMessage({
             action: 'upload',
@@ -191,12 +201,16 @@ class vsUpload {
             }
         };
     }
+	
+	getFileExt(file){
+		return file.name.split('.').pop().toLowerCase();
+	}
 
     /**
      * Cancels an ongoing file upload.
      * @param {string} ranID - The unique ID of the upload to cancel.
      */
-    cancelUpload(ranID) {
+	cancelUpload(ranID){
 		const worker = this.xhrRefs[ranID];
 		if(work) worker.postMessage({ action: 'abort', ranID: ranID });
 	}
@@ -204,13 +218,13 @@ class vsUpload {
     createProgressBar(file) {
         const ranID = this.uniqueID(10);
         const wrapper = document.createElement('div');
-    	wrapper.id = ranID;
-    	wrapper.className = 'vsUpload_item';
+		wrapper.id = ranID;
+		wrapper.className = 'vsUpload_item';
 
         const fileSIZE = this.formatFileSize(file.size);
-        const fileEXT = file.name.split('.').pop().toUpperCase();
+        const fileEXT = this.getFileExt(file);
         const fileNAME = file.name.split('.').slice(0, -1).join('.');
-        let thumbnailSrc = this.getThumbnailSrc(file, fileEXT.toLowerCase());
+        let thumbnailSrc = this.getThumbnailSrc(file, fileEXT);
 
 		wrapper.innerHTML = (`
 			<div class="thumb">
@@ -222,7 +236,9 @@ class vsUpload {
 			<div class="btns"><button value="X" id="${ranID}_cancel">`);
 
         this.progressContainer.appendChild(wrapper);
-        this.previewImage(file, `${ranID}_img`);
+		if(thumbnailSrc){
+			this.previewImage(file, `${ranID}_img`);
+		}
 
         return ranID;
     }
@@ -233,10 +249,15 @@ class vsUpload {
         const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
         return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
     }
-    getThumbnailSrc(file, fileEXT) {
-      const supportedImageTypes = ['jpg', 'jpeg', 'png', 'gif'];
-      if (supportedImageTypes.includes(fileEXT)) {
-        return URL.createObjectURL(file);
+    
+	isThumbReady(file, fileEXT){
+		fileEXT = fileEXT ?? this.getFileExt(file);
+		const supportedImageTypes = ['jpg', 'jpeg', 'png', 'gif'];
+		return supportedImageTypes.includes(fileEXT);
+	}
+	getThumbnailSrc(file, fileEXT) {
+		if(this.isThumbReady(file, fileEXT)){
+			return URL.createObjectURL(file);
         }
         else false;
     }
@@ -248,7 +269,7 @@ class vsUpload {
         };
         reader.readAsDataURL(file);
     }
-
+	
 	
 	/**
 		Will trigger Share prompt to user.
@@ -266,11 +287,20 @@ class vsUpload {
 		try {
             const screenStream  = await navigator.mediaDevices.getDisplayMedia({ video: true });
 
+			// Still Image
             if (singleFrame) this.captureSingleFrame(screenStream, preview);
             else {
-				const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-				const combinedStream = new MediaStream([...screenStream.getTracks(), ...audioStream.getTracks()]);
-				this.recordVideo(combinedStream, preview);
+				// See if we can get audio (mic)
+				try {
+					const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+					const combinedStream = new MediaStream([...screenStream.getTracks(), ...audioStream.getTracks()]);
+					this.recordVideo(combinedStream, preview);
+				}
+				// Else just capture video
+				catch(audioError){
+					console.log('Audio cpature failed or user denied permission');
+					this.captureSingleFrame(screenStream, preview);
+				}
 			}
         }
 		catch (err) {
@@ -325,6 +355,15 @@ class vsUpload {
             }
         };
 
+		// Event listener for when the recording starts
+		mediaRecorder.onstart = () => {
+			console.log('Recording started');
+			if (typeof this.onStartRecording === 'function') {
+				this.onStartRecording();
+			}
+		};
+
+		// Event listener for when the recording stops
         mediaRecorder.onstop = () => {
             const blob = new Blob(recordedChunks, {
                 type: 'video/webm'
@@ -334,7 +373,17 @@ class vsUpload {
             if(preview && typeof this.onPreview === 'function') this.onPreview(file);
 			else this.uploadFile(file);
             recordedChunks = [];
+			if (typeof this.onStopRecording === 'function') {
+				this.onStopRecording();
+			}
         };
+		// Event listener for recording errors
+		mediaRecorder.onerror = (event) => {
+			console.error('Recording error:', event);
+			if (typeof this.onErrorRecording === 'function') {
+				this.onErrorRecording(event);
+			}
+		};
 
         mediaRecorder.start();
 		
